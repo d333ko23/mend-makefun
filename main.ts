@@ -110,10 +110,35 @@ function normLine(s: string, tier: number): string {
   return s.replace(/^[ \t]+/, '').replace(/[ \t]+$/, '');
 }
 
+/**
+ * Normalized copies of a line array, cached per array and tier. The matcher scans every
+ * candidate position at up to three tiers, and without this cache it re-normalized every
+ * file line at every position; line arrays are replaced, never mutated, when a file
+ * changes, so a cached copy stays valid for its array.
+ */
+const normCache = new WeakMap<string[], Map<number, string[]>>();
+function normed(lines: string[], tier: number): string[] {
+  // Tier 0 normalizes to the line itself, so the array is already normalized.
+  if (tier === 0) return lines;
+  let byTier = normCache.get(lines);
+  if (byTier === undefined) {
+    byTier = new Map();
+    normCache.set(lines, byTier);
+  }
+  let arr = byTier.get(tier);
+  if (arr === undefined) {
+    arr = lines.map((l) => normLine(l, tier));
+    byTier.set(tier, arr);
+  }
+  return arr;
+}
+
 function matchAt(file: string[], O: string[], pos: number, tier: number): boolean {
   if (pos < 0 || pos + O.length > file.length) return false;
+  const nf = normed(file, tier);
+  const nO = normed(O, tier);
   for (let k = 0; k < O.length; k++) {
-    if (normLine(file[pos + k]!, tier) !== normLine(O[k]!, tier)) return false;
+    if (nf[pos + k]! !== nO[k]!) return false;
   }
   return true;
 }
@@ -654,8 +679,10 @@ function parseVChunks(raw: RawLine[]): VChunk[] {
 
 function findAnchor(lines: string[], anchor: string, from: number, strict: boolean): number {
   for (const t of tiers(strict)) {
+    const nl = normed(lines, t);
+    const na = normLine(anchor, t);
     for (let i = from; i < lines.length; i++) {
-      if (normLine(lines[i]!, t) === normLine(anchor, t)) return i;
+      if (nl[i]! === na) return i;
     }
   }
   return -1;
